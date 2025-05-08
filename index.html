@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Video Labeler</title>
+  <style>
+    body { font-family: Arial; text-align: center; margin-top: 40px; }
+    button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+    video { margin-top: 20px; max-width: 90%; height: auto; text-align: auto; }
+    input[type="number"] { padding: 8px; font-size: 16px; width: 80px; }
+  </style>
+</head>
+<body>
+  <h2>Video Labeling Tool</h2>
+  <p>
+    Start from file #: <input type="number" id="startIndex" min="1" max="3" value="1">
+    <button onclick="startLabeling()">Start</button>
+  </p>
+  <p id="filename">Waiting to start...</p>
+  <video id="player" controls></video>
+  <div id="buttons"></div>
+  <br><br>
+  <button onclick="downloadCSV()">Download CSV</button>
+
+  <script>
+    const files = [
+      "MATLAB 1-00 PM Fri, Jun 28, 2024 Run8 .mp4",
+      "MATLAB 1-02 PM Mon, Mar 11, 2024 Run4 .mp4",
+      "MATLAB 1-02 PM Thu, Nov 7, 2024 Run8 .mp4"
+    ];
+
+    const labelsList = [
+      "Single Rhythmic",
+      "Double Rhythmic",
+      "Random",
+      "Rhythmic with Climax",
+      "Noise (no meaningful)",
+      "1 Rhythmic with Random",
+      "Triple Rhythmic",
+      "Transition between two",
+      "Other Regime"
+    ];
+
+    let current = 0;
+    const labels = [];
+    const player = document.getElementById("player");
+    const filenameDisplay = document.getElementById("filename");
+    const startIndexInput = document.getElementById("startIndex");
+
+    const buttonsDiv = document.getElementById("buttons");
+    labelsList.forEach((label) => {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      btn.onclick = () => labelFile(label);
+      buttonsDiv.appendChild(btn);
+    });
+
+    function startLabeling() {
+      const start = parseInt(startIndexInput.value);
+      if (start >= 1 && start <= files.length) {
+        current = start - 1;
+        loadFile();
+      } else {
+        alert("Invalid starting index.");
+      }
+    }
+
+    function loadFile() {
+      if (current >= files.length) {
+        filenameDisplay.textContent = "All files labeled!";
+        player.style.display = "none";
+        return;
+      }
+      filenameDisplay.textContent = `Now playing: ${files[current]}, file ${current+1}`;
+      player.src = "video/" + files[current];
+      player.style.display = "block";
+      player.load();
+    }
+
+    function labelFile(group) {
+      labels.push({ file: files[current], group });
+      current++;
+      loadFile();
+    }
+
+    function downloadCSV() {
+      const csv = "filename,regime\n" + labels.map(l => `${l.file},${l.group}`).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "labels.csv";
+      a.click();
+    }
+  </script>
+</body>
+</html>
