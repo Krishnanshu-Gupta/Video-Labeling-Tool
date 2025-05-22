@@ -1,33 +1,77 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Video Labeler</title>
+  <meta charset="utf-8"/>
+  <title>Video Labeling Tool with Contextual Plots</title>
+  <script src="https://cdn.plot.ly/plotly-2.26.1.min.js"></script>
   <style>
-    body { font-family: Arial; text-align: center; margin-top: 40px; }
-    button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+    body { font-family: Arial; text-align: center; margin: 20px; }
+    h2 { margin-bottom: 5px; }
+    #context-info { font-style: italic; margin-bottom: 20px; }
+
+    /* Video */
     video {
       display: block;
       margin: 20px auto;
       max-width: 90%;
       height: auto;
     }
+
+    /* Main plot */
+    #main-plot { width: 80%; height: 600px; margin: auto; }
+
+    /* Container for subplots */
+    #subplots-container {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-top: 30px;
+    }
+    .subplot {
+      flex: 1;
+      min-width: 250px;
+      max-width: 45%;
+    }
+    .subplot h4 {
+      margin: 5px 0;
+    }
+    .plot-panel {
+      width: 100%;
+      height: 400px;
+    }
+
+    /* Labeling controls */
+    button { margin: 10px; padding: 10px 20px; font-size: 16px; }
     input[type="number"] { padding: 8px; font-size: 16px; width: 80px; }
+    #filename { font-weight: bold; margin-top: 10px; }
   </style>
 </head>
 <body>
   <h2>Video Labeling Tool</h2>
+
+  <!-- Video for current run -->
+  <video id="player" controls style="display:none"></video>
+
+  <!-- Context info and plots -->
+  <p id="context-info">Waiting for video…</p>
+  <div id="main-plot"></div>
+  <div id="subplots-container">
+    <div id="prev-subplot" class="subplot"></div>
+    <div id="next-subplot" class="subplot"></div>
+  </div>
+
+  <!-- Labeling controls at bottom -->
   <p>
-    Start from file #: <input type="number" id="startIndex" min="1" max="110" value="1">
+    Start from file #:
+    <input type="number" id="startIndex" min="1" value="1">
     <button onclick="startLabeling()">Start</button>
   </p>
   <p id="filename">Waiting to start...</p>
-  <video id="player" controls></video>
-  <img id="image" style="max-width: 90%; margin: 20px auto; display: none;">
   <div id="buttons"></div>
-  <br><br>
   <button onclick="downloadCSV()">Download CSV</button>
 
   <script>
+    // --- 1) Your files & labels ---
     const files = [
       "MATLAB 1-07 PM Fri, Jun 14, 2024 Run1 .mp4",
       "MATLAB 1-14 PM Tue, Sep 10, 2024 Run10 .mp4",
@@ -153,67 +197,184 @@
       "Other Regime"
     ];
 
+    // --- 2) State & DOM refs ---
     let current = 0;
     const labels = [];
     const player = document.getElementById("player");
-    const filenameDisplay = document.getElementById("filename");
+    const contextInfo = document.getElementById("context-info");
+    const mainPlot    = document.getElementById("main-plot");
     const startIndexInput = document.getElementById("startIndex");
+    const filenameDisplay = document.getElementById("filename");
+    const buttonsDiv  = document.getElementById("buttons");
 
-    const buttonsDiv = document.getElementById("buttons");
-    labelsList.forEach((label) => {
+    // build label buttons
+    labelsList.forEach(label => {
       const btn = document.createElement("button");
       btn.textContent = label;
       btn.onclick = () => labelFile(label);
       buttonsDiv.appendChild(btn);
     });
 
+    // --- 3) Start labeling ---
     function startLabeling() {
-      const start = parseInt(startIndexInput.value);
-      if (start >= 1 && start <= files.length) {
-        current = start - 1;
+      const idx = parseInt(startIndexInput.value) - 1;
+      if (idx >= 0 && idx < files.length) {
+        current = idx;
         loadFile();
       } else {
-        alert("Invalid starting index.");
+        alert("Invalid start index.");
       }
     }
 
+    // --- 4) Load video + context + plots ---
     function loadFile() {
       if (current >= files.length) {
         filenameDisplay.textContent = "All files labeled!";
         player.style.display = "none";
-        document.getElementById("image").style.display = "none";
+        contextInfo.textContent = "";
+        mainPlot.innerHTML = "";
+        document.getElementById("subplots-container").style.display = "none";
         return;
       }
-      filenameDisplay.textContent = `Now playing: ${files[current]}, file ${current+1}`;
-      player.src = "video/" + files[current];
+
+      const videoFile = files[current];
+      filenameDisplay.textContent = `Now labeling: ${videoFile} (file ${current+1})`;
+
+      // show video
+      player.src = "video/" + videoFile;
       player.style.display = "block";
-
-      // Load corresponding image
-      const imageElement = document.getElementById("image");
-      const imagePath = "images/" + files[current].replace(".mp4", ".csv.png");
-      imageElement.src = imagePath;
-      imageElement.style.display = "block";
-      imageElement.onerror = function() {
-        imageElement.style.display = "none";
-      };
-
       player.load();
+
+      // derive CSV filename
+      const csvBase = videoFile.replace(/\.mp4$/, ".csv");
+      const csvPath = "All/" + csvBase;
+
+      // fetch filenames.txt → build context → plot
+      fetch("filenames.txt")
+        .then(r => { if (!r.ok) throw 0; return r.text(); })
+        .then(txt => {
+          const lines = txt.trim().split("\n").filter(l => l.trim());
+          const baseList = [], fullList = [];
+          lines.forEach(line => {
+            const [left,right] = line.split("|");
+            if (!right) return;
+            baseList.push(left.trim().replace(/\s*\.csv$/,".csv"));
+            fullList.push(right.trim());
+          });
+          // group by date
+          const groups = {};
+          baseList.forEach(b => {
+            const key = b.split(" Run")[0];
+            (groups[key]||(groups[key]=[])).push(b);
+          });
+
+          // locate our CSV in fullList
+          const idxFull = fullList.indexOf(csvBase);
+          if (idxFull<0) throw 1;
+          const base = baseList[idxFull];
+          const grp  = groups[base.split(" Run")[0]]||[];
+          const pos  = grp.indexOf(base);
+          const prevBase = pos>0? grp[pos-1] : null;
+          const nextBase = pos<grp.length-1? grp[pos+1] : null;
+          const prevFull = prevBase? fullList[baseList.indexOf(prevBase)] : null;
+          const nextFull = nextBase? fullList[baseList.indexOf(nextBase)] : null;
+
+          // update context text
+          contextInfo.textContent =
+            `Context for ${csvBase} — Prev: ${prevFull||"none"}, Next: ${nextFull||"none"}`;
+
+          // dynamic subplot sizing
+          const prevDiv = document.getElementById("prev-subplot");
+          const nextDiv = document.getElementById("next-subplot");
+          if (!prevFull && !nextFull) {
+            document.getElementById("subplots-container").style.display = "none";
+          } else {
+            document.getElementById("subplots-container").style.display = "flex";
+            if (!prevFull) {
+              prevDiv.style.display = "none";
+              nextDiv.style.maxWidth = "80%";
+            } else if (!nextFull) {
+              nextDiv.style.display = "none";
+              prevDiv.style.maxWidth = "80%";
+            }
+          }
+
+          // plot main + subplots
+          plotWithClamp("main-plot", csvPath, "Current Run");
+          plotSubplot("prev-subplot", prevFull, "Previous Run");
+          plotSubplot("next-subplot", nextFull, "Next Run");
+        })
+        .catch(err => {
+          contextInfo.textContent =
+            err===0? "Error loading filenames.txt" : "CSV not found in mapping";
+          mainPlot.innerHTML = "";
+          document.getElementById("subplots-container").style.display = "none";
+        });
     }
 
+    // 5) Plot helper for subplots
+    function plotSubplot(containerId, fullName, label) {
+      if (!fullName) return;
+      const cont = document.getElementById(containerId);
+      cont.innerHTML = `<h4>${label}</h4>
+        <div id="${containerId}-plot" class="plot-panel"></div>`;
+      plotWithClamp(containerId + "-plot", "All/" + fullName, fullName);
+    }
+
+    // 6) Core Plotly plot + clamp
+    function plotWithClamp(divId, path, titleText) {
+      fetch(path)
+        .then(r => { if (!r.ok) throw new Error(); return r.text(); })
+        .then(txt => {
+          const lines = txt.trim().split("\n"),
+                hdrs  = lines[0].split(","),
+                tIdx  = hdrs.indexOf("Time"),
+                c0Idx = hdrs.indexOf("0");
+          if (tIdx<0||c0Idx<0) throw new Error();
+
+          const rows = lines.slice(1).map(l=>l.split(","));
+          const time = rows.map(r=>+r[tIdx]),
+                acc  = rows.map(r=>+r[c0Idx]),
+                maxT = time[time.length-1];
+
+          Plotly.newPlot(divId, [{
+            x: time, y: acc, mode:"lines", line:{width:2}
+          }], {
+            margin:{t:40,b:40,l:50,r:20},
+            title: titleText,
+            xaxis:{ title:"Time", range:[0,maxT], autorange:false, rangemode:"nonnegative" },
+            yaxis:{ title:"Accel" }
+          },{responsive:true, scrollZoom:true});
+
+          const pd = document.getElementById(divId);
+          pd.on("plotly_relayout", e => {
+            const u={};
+            if (e["xaxis.range[0]"]<0)   u["xaxis.range[0]"]=0;
+            if (e["xaxis.range[1]"]>maxT) u["xaxis.range[1]"]=maxT;
+            if (Object.keys(u).length) Plotly.relayout(pd,u);
+          });
+        })
+        .catch(() => {
+          document.getElementById(divId).innerHTML =
+            "<p style='color:red;'>Error loading CSV</p>";
+        });
+    }
+
+    // 7) Record label & advance
     function labelFile(group) {
       labels.push({ file: files[current], group });
       current++;
       loadFile();
     }
 
+    // 8) Download results
     function downloadCSV() {
-      const csv = "filename,regime\n" + labels.map(l => `${l.file},${l.group}`).join("\n");
-      const blob = new Blob([csv], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "labels.csv";
-      a.click();
+      const csv = "filename,regime\n"
+        + labels.map(l=>`${l.file},${l.group}`).join("\n");
+      const blob = new Blob([csv],{type:"text/csv"});
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href    = url; a.download="labels.csv"; a.click();
     }
   </script>
 </body>
